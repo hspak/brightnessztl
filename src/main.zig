@@ -204,6 +204,7 @@ fn calc_percent(curr: []const u8, max: []const u8, percent: []const u8, action: 
         try fmt.parseInt(u32, max[0 .. max.len - 1], 10)
     else
         try fmt.parseInt(u32, max, 10);
+
     const percent_value = try fmt.parseInt(u32, percent, 10);
     const delta = max_value * percent_value / 100;
     const new_value = if (mem.eql(u8, action, "inc"))
@@ -211,8 +212,14 @@ fn calc_percent(curr: []const u8, max: []const u8, percent: []const u8, action: 
     else if (mem.eql(u8, action, "dec"))
         value - delta
     else
-        ArgError.InvalidSetActionValue;
-    return fmt.allocPrint(allocator, "{}", new_value);
+        return ArgError.InvalidSetActionValue;
+    const safe_value = if (new_value > max_value)
+        max_value
+    else if (new_value < 0)
+        0
+    else
+        new_value;
+    return fmt.allocPrint(allocator, "{}", safe_value);
 }
 
 fn write_file(path: []const u8, value: []const u8) !void {
