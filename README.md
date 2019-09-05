@@ -24,5 +24,8 @@ brightnessztl <action> [action-options]
     min:     Set brightness to minimum
 ```
 
+## Install
+Available on Arch Linux via [AUR](https://aur.archlinux.org/packages/brightnessztl/)
+
 ## License
 MIT
