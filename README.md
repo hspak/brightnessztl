@@ -23,6 +23,11 @@ brightnessztl <action> [action-options]
     max:     Set brightness to maximum
     min:     Set brightness to minimum
 ```
+To run this as a non-root user, the following udev rules worked for me, but YMMV
+```
+ACTION=="add", SUBSYSTEM=="backlight", KERNEL=="intel_backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness"
+ACTION=="add", SUBSYSTEM=="backlight", KERNEL=="intel_backlight", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
+```
 
 ## Install
 Available on Arch Linux via [AUR](https://aur.archlinux.org/packages/brightnessztl/)
