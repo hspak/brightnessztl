@@ -101,11 +101,11 @@ fn usage(exe: []const u8) void {
 }
 
 fn find_brightness_path() ![]const u8 {
-    var dir = try fs.Dir.open(allocator, BRIGHTNESS_PATH);
+    var dir = try fs.Dir.open(BRIGHTNESS_PATH);
     defer dir.close();
 
     var dir_list = ArrayList([]const u8).init(allocator);
-    while (try dir.next()) |entry| {
+    while (try dir.iterate().next()) |entry| {
         try dir_list.append(entry.name);
     }
     if (dir_list.len < 1) {
@@ -168,7 +168,7 @@ fn print_file(path: []const u8) !void {
         return err;
     };
     defer file.close();
-    var stdout = try io.getStdOut();
+    var stdout = &io.getStdOut().outStream().stream;
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
@@ -187,7 +187,7 @@ fn print_file(path: []const u8) !void {
 
 fn print_string(msg: []const u8) !void {
     const msg_len = msg.len;
-    var stdout = try io.getStdOut();
+    var stdout = &io.getStdOut().outStream().stream;
     stdout.write(msg) catch |err| {
         warn("Unable to write to stdout\n");
         return err;

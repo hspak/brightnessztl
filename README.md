@@ -3,7 +3,7 @@ A CLI to control device backlight. It defaults to the `intel_backlight` class.
 
 ## Setup
 ```sh
-# requires zig master or zig 0.5 when released
+# requires at least zig 0.5.0+29d7b5a80
 zig build
 ```
 
