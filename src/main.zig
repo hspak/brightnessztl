@@ -10,6 +10,7 @@ const process = std.process;
 
 const BRIGHTNESS_PATH: []const u8 = "/sys/class/backlight";
 const DEFAULT_BACKLIGHT: []const u8 = "intel_backlight";
+const MAX_FILENAME_LEN: usize = 255;
 
 const PathError = error{
     NoBacklightDirsFound,
@@ -34,14 +35,13 @@ const Args = struct {
 var allocator: *Allocator = undefined;
 
 pub fn main() !void {
-    // Using arena allocator, no need to dealloc anything else
+    // Using arena allocator, no need to dealloc anything
     var arena = std.heap.ArenaAllocator.init(std.heap.direct_allocator);
-    defer arena.deinit();
     allocator = &arena.allocator;
 
     var dir = try find_brightness_path();
-    var brightness_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", BRIGHTNESS_PATH, dir, "brightness");
-    var max_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", BRIGHTNESS_PATH, dir, "max_brightness");
+    var brightness_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", .{ BRIGHTNESS_PATH, dir, "brightness" });
+    var max_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", .{ BRIGHTNESS_PATH, dir, "max_brightness" });
     var args = try parseArgs();
     return perform_action(args, brightness_path, max_path);
 }
@@ -97,30 +97,20 @@ fn usage(exe: []const u8) void {
         \\    min:     Set brightness to minimum
         \\
     ;
-    warn(str, exe);
+    warn(str, .{exe});
 }
 
 fn find_brightness_path() ![]const u8 {
-    var dir = try fs.Dir.open(BRIGHTNESS_PATH);
+    var dir = try fs.cwd().openDirList(BRIGHTNESS_PATH);
     defer dir.close();
-
-    var dir_list = ArrayList([]const u8).init(allocator);
+    var last: []const u8 = try allocator.alloc(u8, MAX_FILENAME_LEN);
     while (try dir.iterate().next()) |entry| {
-        try dir_list.append(entry.name);
-    }
-    if (dir_list.len < 1) {
-        return PathError.NoBacklightDirsFound;
-    }
-
-    // If there are more than one, default to DEFAULT_BACKLIGHT,
-    // otherwise, just take the first item in the list.
-    var iter = dir_list.iterator();
-    while (iter.next()) |item| {
-        if (mem.eql(u8, item, DEFAULT_BACKLIGHT)) {
+        if (mem.eql(u8, entry.name, DEFAULT_BACKLIGHT)) {
             return DEFAULT_BACKLIGHT;
         }
+        last = entry.name;
     }
-    return dir_list.items[0];
+    return last;
 }
 
 fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8) !void {
@@ -164,7 +154,7 @@ fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8)
 
 fn print_file(path: []const u8) !void {
     var file = fs.File.openRead(path) catch |err| {
-        warn("Cannot open {} with read permissions.\n", path);
+        warn("Cannot open {} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
@@ -172,14 +162,14 @@ fn print_file(path: []const u8) !void {
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
-            warn("Unable to read file {}\n", path);
+            warn("Unable to read file {}\n", .{path});
             return err;
         };
         if (bytes_read == 0) {
             break;
         }
         stdout.write(buf[0..bytes_read]) catch |err| {
-            warn("Unable to write to stdout\n");
+            warn("Unable to write to stdout\n", .{});
             return err;
         };
     }
@@ -189,7 +179,7 @@ fn print_string(msg: []const u8) !void {
     const msg_len = msg.len;
     var stdout = &io.getStdOut().outStream().stream;
     stdout.write(msg) catch |err| {
-        warn("Unable to write to stdout\n");
+        warn("Unable to write to stdout\n", .{});
         return err;
     };
 }
@@ -219,30 +209,30 @@ fn calc_percent(curr: []const u8, max: []const u8, percent: []const u8, action: 
         0
     else
         new_value;
-    return fmt.allocPrint(allocator, "{}", safe_value);
+    return fmt.allocPrint(allocator, "{}", .{safe_value});
 }
 
 fn write_file(path: []const u8, value: []const u8) !void {
     var file = fs.File.openWrite(path) catch |err| {
-        warn("Cannot open {} with write permissions.\n", path);
+        warn("Cannot open {} with write permissions.\n", .{path});
         return err;
     };
     defer file.close();
     file.write(value) catch |err| {
-        warn("Cannot write to {}.\n", path);
+        warn("Cannot write to {}.\n", .{path});
         return err;
     };
 }
 
 fn read_file(path: []const u8) ![]const u8 {
     var file = fs.File.openRead(path) catch |err| {
-        warn("Cannot open {} with read permissions.\n", path);
+        warn("Cannot open {} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
     var buf = try allocator.alloc(u8, 4096);
     const bytes_read = file.read(buf[0..]) catch |err| {
-        warn("Unable to read file {}\n", path);
+        warn("Unable to read file {}\n", .{path});
         return err;
     };
     return buf[0..bytes_read];
