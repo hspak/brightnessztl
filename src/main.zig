@@ -127,20 +127,20 @@ fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8)
         try print_string("Max Brightness: ");
         try print_file(max_path);
     } else if (mem.eql(u8, action, "set")) {
-        const option = args.action_option.?;
+        const option = args.action_option;
         const percent = args.option_option;
-        if (percent == null) {
+        if (option == null or percent == null) {
             usage(exe);
             return ArgError.InvalidSetOption;
-        } else if (mem.eql(u8, option, "min")) {
+        } else if (mem.eql(u8, option.?, "min")) {
             try write_file(brightness_path, "0");
-        } else if (mem.eql(u8, option, "max")) {
+        } else if (mem.eql(u8, option.?, "max")) {
             const max = try read_file(max_path);
             try write_file(brightness_path, max);
-        } else if (mem.eql(u8, option, "inc") or mem.eql(u8, option, "dec")) {
+        } else if (mem.eql(u8, option.?, "inc") or mem.eql(u8, option.?, "dec")) {
             const max = try read_file(max_path);
             const curr = try read_file(brightness_path);
-            const new_brightness = try calc_percent(curr, max, percent.?, option);
+            const new_brightness = try calc_percent(curr, max, percent.?, option.?);
             try write_file(brightness_path, new_brightness);
         } else {
             usage(exe);
@@ -153,7 +153,7 @@ fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8)
 }
 
 fn print_file(path: []const u8) !void {
-    var file = fs.File.openRead(path) catch |err| {
+    var file = fs.cwd().openFile(path, .{}) catch |err| {
         warn("Cannot open {} with read permissions.\n", .{path});
         return err;
     };
@@ -213,7 +213,7 @@ fn calc_percent(curr: []const u8, max: []const u8, percent: []const u8, action: 
 }
 
 fn write_file(path: []const u8, value: []const u8) !void {
-    var file = fs.File.openWrite(path) catch |err| {
+    var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
         warn("Cannot open {} with write permissions.\n", .{path});
         return err;
     };
@@ -225,7 +225,7 @@ fn write_file(path: []const u8, value: []const u8) !void {
 }
 
 fn read_file(path: []const u8) ![]const u8 {
-    var file = fs.File.openRead(path) catch |err| {
+    var file = fs.cwd().openFile(path, .{}) catch |err| {
         warn("Cannot open {} with read permissions.\n", .{path});
         return err;
     };
