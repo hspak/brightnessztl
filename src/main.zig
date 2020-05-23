@@ -36,14 +36,14 @@ var allocator: *Allocator = undefined;
 
 pub fn main() !void {
     // Using arena allocator, no need to dealloc anything
-    var arena = std.heap.ArenaAllocator.init(std.heap.direct_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     allocator = &arena.allocator;
 
-    var dir = try find_brightness_path();
+    var dir = try findBrightnessPath();
     var brightness_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", .{ BRIGHTNESS_PATH, dir, "brightness" });
     var max_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", .{ BRIGHTNESS_PATH, dir, "max_brightness" });
     var args = try parseArgs();
-    return perform_action(args, brightness_path, max_path);
+    return performAction(args, brightness_path, max_path);
 }
 
 fn parseArgs() !Args {
@@ -100,8 +100,8 @@ fn usage(exe: []const u8) void {
     warn(str, .{exe});
 }
 
-fn find_brightness_path() ![]const u8 {
-    var dir = try fs.cwd().openDirList(BRIGHTNESS_PATH);
+fn findBrightnessPath() ![]const u8 {
+    var dir = try fs.cwd().openDir(BRIGHTNESS_PATH, .{ .iterate = true });
     defer dir.close();
     var last: []const u8 = try allocator.alloc(u8, MAX_FILENAME_LEN);
     while (try dir.iterate().next()) |entry| {
@@ -113,19 +113,19 @@ fn find_brightness_path() ![]const u8 {
     return last;
 }
 
-fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8) !void {
+fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) !void {
     const exe = args.exe;
     const action = args.action.?;
     if (mem.eql(u8, action, "get")) {
-        try print_file(brightness_path);
+        try printFile(brightness_path);
     } else if (mem.eql(u8, action, "debug")) {
         // TODO: find a more ergonomic print setup
-        try print_string("Backlight path: ");
-        try print_string(brightness_path);
-        try print_string("\nBrightness: ");
-        try print_file(brightness_path);
-        try print_string("Max Brightness: ");
-        try print_file(max_path);
+        try printString("Backlight path: ");
+        try printString(brightness_path);
+        try printString("\nBrightness: ");
+        try printFile(brightness_path);
+        try printString("Max Brightness: ");
+        try printFile(max_path);
     } else if (mem.eql(u8, action, "set")) {
         const option = args.action_option;
         const percent = args.option_option;
@@ -133,15 +133,15 @@ fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8)
             usage(exe);
             return ArgError.InvalidSetOption;
         } else if (mem.eql(u8, option.?, "min")) {
-            try write_file(brightness_path, "0");
+            try writeFile(brightness_path, "0");
         } else if (mem.eql(u8, option.?, "max")) {
-            const max = try read_file(max_path);
-            try write_file(brightness_path, max);
+            const max = try readFile(max_path);
+            try writeFile(brightness_path, max);
         } else if (mem.eql(u8, option.?, "inc") or mem.eql(u8, option.?, "dec")) {
-            const max = try read_file(max_path);
-            const curr = try read_file(brightness_path);
-            const new_brightness = try calc_percent(curr, max, percent.?, option.?);
-            try write_file(brightness_path, new_brightness);
+            const max = try readFile(max_path);
+            const curr = try readFile(brightness_path);
+            const new_brightness = try calcPercent(curr, max, percent.?, option.?);
+            try writeFile(brightness_path, new_brightness);
         } else {
             usage(exe);
             return ArgError.InvalidSetOption;
@@ -152,13 +152,13 @@ fn perform_action(args: Args, brightness_path: []const u8, max_path: []const u8)
     }
 }
 
-fn print_file(path: []const u8) !void {
+fn printFile(path: []const u8) !void {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
         warn("Cannot open {} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
-    var stdout = &io.getStdOut().outStream().stream;
+    var stdout = &io.getStdOut().outStream();
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
@@ -168,23 +168,23 @@ fn print_file(path: []const u8) !void {
         if (bytes_read == 0) {
             break;
         }
-        stdout.write(buf[0..bytes_read]) catch |err| {
+        const bytes_written = stdout.write(buf[0..bytes_read]) catch |err| {
             warn("Unable to write to stdout\n", .{});
             return err;
         };
     }
 }
 
-fn print_string(msg: []const u8) !void {
+fn printString(msg: []const u8) !void {
     const msg_len = msg.len;
-    var stdout = &io.getStdOut().outStream().stream;
-    stdout.write(msg) catch |err| {
+    var stdout = &io.getStdOut().outStream();
+    const btyes_written = stdout.write(msg) catch |err| {
         warn("Unable to write to stdout\n", .{});
         return err;
     };
 }
 
-fn calc_percent(curr: []const u8, max: []const u8, percent: []const u8, action: []const u8) ![]const u8 {
+fn calcPercent(curr: []const u8, max: []const u8, percent: []const u8, action: []const u8) ![]const u8 {
     // Strip trailing newline if it exists
     const value = if (curr[curr.len - 1] == '\n')
         try fmt.parseInt(u32, curr[0 .. curr.len - 1], 10)
@@ -212,28 +212,25 @@ fn calc_percent(curr: []const u8, max: []const u8, percent: []const u8, action: 
     return fmt.allocPrint(allocator, "{}", .{safe_value});
 }
 
-fn write_file(path: []const u8, value: []const u8) !void {
+fn writeFile(path: []const u8, value: []const u8) !void {
     var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
         warn("Cannot open {} with write permissions.\n", .{path});
         return err;
     };
     defer file.close();
-    file.write(value) catch |err| {
+    const bytes_written = file.write(value) catch |err| {
         warn("Cannot write to {}.\n", .{path});
         return err;
     };
 }
 
-fn read_file(path: []const u8) ![]const u8 {
+fn readFile(path: []const u8) ![]const u8 {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
         warn("Cannot open {} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
     var buf = try allocator.alloc(u8, 4096);
-    const bytes_read = file.read(buf[0..]) catch |err| {
-        warn("Unable to read file {}\n", .{path});
-        return err;
-    };
+    const bytes_read = try file.read(buf[0..]);
     return buf[0..bytes_read];
 }
