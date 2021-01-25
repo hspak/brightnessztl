@@ -40,8 +40,8 @@ pub fn main() !void {
     allocator = &arena.allocator;
 
     var dir = try findBrightnessPath();
-    var brightness_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", .{ BRIGHTNESS_PATH, dir, "brightness" });
-    var max_path = try std.fmt.allocPrint(allocator, "{}/{}/{}", .{ BRIGHTNESS_PATH, dir, "max_brightness" });
+    var brightness_path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ BRIGHTNESS_PATH, dir, "brightness" });
+    var max_path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ BRIGHTNESS_PATH, dir, "max_brightness" });
     var args = try parseArgs();
     return performAction(args, brightness_path, max_path);
 }
@@ -82,7 +82,7 @@ fn parseArgs() !Args {
 fn usage(exe: []const u8) void {
     @setEvalBranchQuota(1500);
     const str =
-        \\{} <action> [action-options]
+        \\{s} <action> [action-options]
         \\
         \\  Actions:
         \\    get:    Display current brightness
@@ -154,7 +154,7 @@ fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) 
 
 fn printFile(path: []const u8) !void {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
-        warn("Cannot open {} with read permissions.\n", .{path});
+        warn("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
@@ -162,7 +162,7 @@ fn printFile(path: []const u8) !void {
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
-            warn("Unable to read file {}\n", .{path});
+            warn("Unable to read file {s}\n", .{path});
             return err;
         };
         if (bytes_read == 0) {
@@ -214,19 +214,19 @@ fn calcPercent(curr: []const u8, max: []const u8, percent: []const u8, action: [
 
 fn writeFile(path: []const u8, value: []const u8) !void {
     var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
-        warn("Cannot open {} with write permissions.\n", .{path});
+        warn("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
     defer file.close();
     const bytes_written = file.write(value) catch |err| {
-        warn("Cannot write to {}.\n", .{path});
+        warn("Cannot write to {s}.\n", .{path});
         return err;
     };
 }
 
 fn readFile(path: []const u8) ![]const u8 {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
-        warn("Cannot open {} with read permissions.\n", .{path});
+        warn("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
