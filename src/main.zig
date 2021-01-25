@@ -158,7 +158,7 @@ fn printFile(path: []const u8) !void {
         return err;
     };
     defer file.close();
-    var stdout = &io.getStdOut().outStream();
+    var stdout = &io.getStdOut().writer();
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
@@ -177,7 +177,7 @@ fn printFile(path: []const u8) !void {
 
 fn printString(msg: []const u8) !void {
     const msg_len = msg.len;
-    var stdout = &io.getStdOut().outStream();
+    var stdout = &io.getStdOut().writer();
     const btyes_written = stdout.write(msg) catch |err| {
         warn("Unable to write to stdout\n", .{});
         return err;
