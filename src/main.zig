@@ -129,7 +129,7 @@ fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) 
     } else if (mem.eql(u8, action, "set")) {
         const option = args.action_option;
         const percent = args.option_option;
-        if (option == null or percent == null) {
+        if (option == null and percent == null) {
             usage(exe);
             return ArgError.InvalidSetOption;
         } else if (mem.eql(u8, option.?, "min")) {
