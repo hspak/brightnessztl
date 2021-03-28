@@ -195,6 +195,9 @@ fn calcPercent(curr: []const u8, max: []const u8, percent: []const u8, action: [
     else
         try fmt.parseInt(u32, max, 10);
 
+    if (percent[0] == '-') {
+        return ArgError.InvalidSetActionValue;
+    }
     const percent_value = try fmt.parseInt(u32, percent, 10);
     const delta = max_value * percent_value / 100;
     const new_value = if (mem.eql(u8, action, "inc"))
