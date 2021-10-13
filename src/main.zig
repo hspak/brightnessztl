@@ -75,7 +75,6 @@ fn parseArgs() !Args {
         usage(exe);
         return ArgError.MissingAction;
     }
-    var action = parsed_args.action.?;
     return parsed_args;
 }
 
@@ -158,7 +157,7 @@ fn printFile(path: []const u8) !void {
         return err;
     };
     defer file.close();
-    var stdout = &io.getStdOut().writer();
+    const stdout = io.getStdOut().writer();
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
@@ -168,7 +167,7 @@ fn printFile(path: []const u8) !void {
         if (bytes_read == 0) {
             break;
         }
-        const bytes_written = stdout.write(buf[0..bytes_read]) catch |err| {
+        stdout.writeAll(buf[0..bytes_read]) catch |err| {
             warn("Unable to write to stdout\n", .{});
             return err;
         };
@@ -176,9 +175,8 @@ fn printFile(path: []const u8) !void {
 }
 
 fn printString(msg: []const u8) !void {
-    const msg_len = msg.len;
-    var stdout = &io.getStdOut().writer();
-    const btyes_written = stdout.write(msg) catch |err| {
+    const stdout = io.getStdOut().writer();
+    stdout.writeAll(msg) catch |err| {
         warn("Unable to write to stdout\n", .{});
         return err;
     };
@@ -221,7 +219,7 @@ fn writeFile(path: []const u8, value: []const u8) !void {
         return err;
     };
     defer file.close();
-    const bytes_written = file.write(value) catch |err| {
+    file.writer().writeAll(value) catch |err| {
         warn("Cannot write to {s}.\n", .{path});
         return err;
     };
