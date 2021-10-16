@@ -136,7 +136,7 @@ fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) 
             usage(exe);
             return ArgError.InvalidSetOption;
         } else if (mem.eql(u8, option.?, "min")) {
-            try writeFile(brightness_path, "0");
+            try writeFile(brightness_path, 0);
         } else if (mem.eql(u8, option.?, "max")) {
             const max = try readFile(max_path);
             try writeFile(brightness_path, max);
@@ -186,56 +186,51 @@ fn printString(msg: []const u8) !void {
     };
 }
 
-fn calcPercent(curr: []const u8, max: []const u8, percent: []const u8, action: []const u8) ![]const u8 {
-    // Strip trailing newline if it exists
-    const value = if (curr[curr.len - 1] == '\n')
-        try fmt.parseInt(u32, curr[0 .. curr.len - 1], 10)
-    else
-        try fmt.parseInt(u32, curr, 10);
-    const max_value = if (max[max.len - 1] == '\n')
-        try fmt.parseInt(u32, max[0 .. max.len - 1], 10)
-    else
-        try fmt.parseInt(u32, max, 10);
-
+fn calcPercent(curr: u32, max: u32, percent: []const u8, action: []const u8) !u32 {
     if (percent[0] == '-') {
         return ArgError.InvalidSetActionValue;
     }
     const percent_value = try fmt.parseInt(u32, percent, 10);
-    const delta = max_value * percent_value / 100;
+    const delta = max * percent_value / 100;
     const new_value = if (mem.eql(u8, action, "inc"))
-        value + delta
+        curr + delta
     else if (mem.eql(u8, action, "dec"))
-        value - delta
+        curr - delta
     else
         return ArgError.InvalidSetActionValue;
-    const safe_value = if (new_value > max_value)
-        max_value
+    const safe_value = if (new_value > max)
+        max
     else if (new_value < 0)
         0
     else
         new_value;
-    return fmt.allocPrint(allocator, "{}", .{safe_value});
+
+    return safe_value;
 }
 
-fn writeFile(path: []const u8, value: []const u8) !void {
+fn writeFile(path: []const u8, value: u32) !void {
     var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
         warn("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
     defer file.close();
-    file.writer().writeAll(value) catch |err| {
+
+    file.writer().print("{}", .{value}) catch |err| {
         warn("Cannot write to {s}.\n", .{path});
         return err;
     };
 }
 
-fn readFile(path: []const u8) ![]const u8 {
+fn readFile(path: []const u8) !u32 {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
         warn("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
-    var buf = try allocator.alloc(u8, 4096);
-    const bytes_read = try file.read(buf[0..]);
-    return buf[0..bytes_read];
+
+    var buf: [128]u8 = undefined;
+    const bytes_read = try file.read(&buf);
+    const trimmed = std.mem.trimRight(u8, buf[0..bytes_read], "\n");
+
+    return std.fmt.parseInt(u32, trimmed, 10);
 }
