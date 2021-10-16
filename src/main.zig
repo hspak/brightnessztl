@@ -12,9 +12,9 @@ const c = @cImport({
     @cInclude("systemd/sd-bus.h");
 });
 
-const BRIGHTNESS_PATH: []const u8 = "/sys/class/backlight";
-const DEFAULT_BACKLIGHT: []const u8 = "intel_backlight";
-const MAX_FILENAME_LEN: usize = 255;
+const sys_class_path = "/sys/class";
+const default_class = "backlight";
+const default_name = "intel_backlight";
 
 const PathError = error{
     NoBacklightDirsFound,
@@ -42,10 +42,13 @@ pub fn main() !void {
     // Using arena allocator, no need to dealloc anything
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     allocator = &arena.allocator;
+    defer arena.deinit();
 
-    var dir = try findBrightnessPath();
-    var brightness_path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ BRIGHTNESS_PATH, dir, "brightness" });
-    var max_path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ BRIGHTNESS_PATH, dir, "max_brightness" });
+    const path = try std.fs.path.join(allocator, &.{ sys_class_path, default_class });
+    const dir = try findBrightnessPath(path, default_name);
+    const brightness_path = try std.fs.path.join(allocator, &.{ path, dir, "brightness" });
+    const max_path = try std.fs.path.join(allocator, &.{ path, dir, "max_brightness" });
+
     var args = try parseArgs();
     return performAction(args, brightness_path, max_path);
 }
@@ -103,17 +106,30 @@ fn usage(exe: []const u8) void {
     warn(str, .{exe});
 }
 
-fn findBrightnessPath() ![]const u8 {
-    var dir = try fs.cwd().openDir(BRIGHTNESS_PATH, .{ .iterate = true });
+/// Checks if name is present in path, if not, returns the first entry
+/// (lexicographically sorted)
+fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
+    var dir = try fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
-    var last: []const u8 = try allocator.alloc(u8, MAX_FILENAME_LEN);
-    while (try dir.iterate().next()) |entry| {
-        if (mem.eql(u8, entry.name, DEFAULT_BACKLIGHT)) {
-            return DEFAULT_BACKLIGHT;
+
+    if (dir.openDir(name, .{})) |*default_dir| {
+        default_dir.close();
+        return name;
+    } else |_| {
+        var result: ?[]const u8 = null;
+        var iterator = dir.iterate();
+        while (try iterator.next()) |entry| {
+            if (result) |candidate| {
+                if (std.mem.order(u8, candidate, entry.name) == .lt) {
+                    result = try allocator.dupe(u8, entry.name);
+                }
+            } else {
+                result = try allocator.dupe(u8, entry.name);
+            }
         }
-        last = entry.name;
+
+        return if (result) |first| first else error.NoBacklightDirsFound;
     }
-    return last;
 }
 
 fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) !void {
