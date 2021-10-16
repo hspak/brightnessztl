@@ -8,6 +8,10 @@ const mem = std.mem;
 const warn = std.debug.warn;
 const process = std.process;
 
+const c = @cImport({
+    @cInclude("systemd/sd-bus.h");
+});
+
 const BRIGHTNESS_PATH: []const u8 = "/sys/class/backlight";
 const DEFAULT_BACKLIGHT: []const u8 = "intel_backlight";
 const MAX_FILENAME_LEN: usize = 255;
