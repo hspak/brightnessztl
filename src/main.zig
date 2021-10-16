@@ -44,13 +44,12 @@ pub fn main() !void {
     allocator = &arena.allocator;
     defer arena.deinit();
 
-    const path = try std.fs.path.join(allocator, &.{ sys_class_path, default_class });
-    const dir = try findBrightnessPath(path, default_name);
-    const brightness_path = try std.fs.path.join(allocator, &.{ path, dir, "brightness" });
-    const max_path = try std.fs.path.join(allocator, &.{ path, dir, "max_brightness" });
+    const class = default_class;
+    const path = try std.fs.path.join(allocator, &.{ sys_class_path, class });
+    const name = try findBrightnessPath(path, default_name);
 
     var args = try parseArgs();
-    return performAction(args, brightness_path, max_path);
+    return performAction(args, class, name);
 }
 
 fn parseArgs() !Args {
@@ -132,9 +131,13 @@ fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
     }
 }
 
-fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) !void {
+fn performAction(args: Args, class: []const u8, name: []const u8) !void {
     const exe = args.exe;
     const action = args.action.?;
+
+    const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
+    const max_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "max_brightness" });
+
     if (mem.eql(u8, action, "get")) {
         try printFile(brightness_path);
     } else if (mem.eql(u8, action, "debug")) {
