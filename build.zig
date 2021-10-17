@@ -10,6 +10,9 @@ pub fn build(b: *Builder) void {
     ) orelse true;
 
     const exe = b.addExecutable("brightnessztl", "src/main.zig");
+    const exe_options = b.addOptions();
+    exe.addOptions("build_options", exe_options);
+    exe_options.addOption(bool, "logind", logind);
 
     if (logind) {
         exe.linkLibC();

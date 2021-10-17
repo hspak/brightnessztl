@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const fmt = std.fmt;
@@ -155,15 +156,15 @@ fn performAction(args: Args, class: []const u8, name: []const u8) !void {
             usage(exe);
             return ArgError.InvalidSetOption;
         } else if (mem.eql(u8, option.?, "min")) {
-            try writeFile(brightness_path, 0);
+            try setBrightness(class, name, 0);
         } else if (mem.eql(u8, option.?, "max")) {
             const max = try readFile(max_path);
-            try writeFile(brightness_path, max);
+            try setBrightness(class, name, max);
         } else if (mem.eql(u8, option.?, "inc") or mem.eql(u8, option.?, "dec")) {
             const max = try readFile(max_path);
             const curr = try readFile(brightness_path);
             const new_brightness = try calcPercent(curr, max, percent.?, option.?);
-            try writeFile(brightness_path, new_brightness);
+            try setBrightness(class, name, new_brightness);
         } else {
             usage(exe);
             return ArgError.InvalidSetOption;
@@ -252,4 +253,36 @@ fn readFile(path: []const u8) !u32 {
     const trimmed = std.mem.trimRight(u8, buf[0..bytes_read], "\n");
 
     return std.fmt.parseInt(u32, trimmed, 10);
+}
+
+const setBrightness = if (build_options.logind) setBrightnessWithLogind else setBrightnessWithSysfs;
+
+fn setBrightnessWithSysfs(class: []const u8, name: []const u8, value: u32) !void {
+    const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
+
+    try writeFile(brightness_path, value);
+}
+
+fn setBrightnessWithLogind(class: []const u8, name: []const u8, value: u32) !void {
+    var bus: ?*c.sd_bus = null;
+    if (c.sd_bus_default_system(&bus) < 0) {
+        return error.DBusConnectError;
+    }
+    defer _ = c.sd_bus_unref(bus);
+
+    if (c.sd_bus_call_method(
+        bus,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1/session/auto",
+        "org.freedesktop.login1.Session",
+        "SetBrightness",
+        null,
+        null,
+        "ssu",
+        (try allocator.dupeZ(u8, class)).ptr,
+        (try allocator.dupeZ(u8, name)).ptr,
+        value,
+    ) < 0) {
+        return error.DBusMethodCallError;
+    }
 }
