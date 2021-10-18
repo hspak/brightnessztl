@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const fmt = std.fmt;
@@ -8,9 +9,13 @@ const mem = std.mem;
 const warn = std.debug.warn;
 const process = std.process;
 
-const BRIGHTNESS_PATH: []const u8 = "/sys/class/backlight";
-const DEFAULT_BACKLIGHT: []const u8 = "intel_backlight";
-const MAX_FILENAME_LEN: usize = 255;
+const c = @cImport({
+    @cInclude("systemd/sd-bus.h");
+});
+
+const sys_class_path = "/sys/class";
+const default_class = "backlight";
+const default_name = "intel_backlight";
 
 const PathError = error{
     NoBacklightDirsFound,
@@ -38,12 +43,14 @@ pub fn main() !void {
     // Using arena allocator, no need to dealloc anything
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     allocator = &arena.allocator;
+    defer arena.deinit();
 
-    var dir = try findBrightnessPath();
-    var brightness_path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ BRIGHTNESS_PATH, dir, "brightness" });
-    var max_path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ BRIGHTNESS_PATH, dir, "max_brightness" });
+    const class = default_class;
+    const path = try std.fs.path.join(allocator, &.{ sys_class_path, class });
+    const name = try findBrightnessPath(path, default_name);
+
     var args = try parseArgs();
-    return performAction(args, brightness_path, max_path);
+    return performAction(args, class, name);
 }
 
 fn parseArgs() !Args {
@@ -99,22 +106,39 @@ fn usage(exe: []const u8) void {
     warn(str, .{exe});
 }
 
-fn findBrightnessPath() ![]const u8 {
-    var dir = try fs.cwd().openDir(BRIGHTNESS_PATH, .{ .iterate = true });
+/// Checks if name is present in path, if not, returns the first entry
+/// (lexicographically sorted)
+fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
+    var dir = try fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
-    var last: []const u8 = try allocator.alloc(u8, MAX_FILENAME_LEN);
-    while (try dir.iterate().next()) |entry| {
-        if (mem.eql(u8, entry.name, DEFAULT_BACKLIGHT)) {
-            return DEFAULT_BACKLIGHT;
+
+    if (dir.openDir(name, .{})) |*default_dir| {
+        default_dir.close();
+        return name;
+    } else |_| {
+        var result: ?[]const u8 = null;
+        var iterator = dir.iterate();
+        while (try iterator.next()) |entry| {
+            if (result) |candidate| {
+                if (std.mem.order(u8, candidate, entry.name) == .lt) {
+                    result = try allocator.dupe(u8, entry.name);
+                }
+            } else {
+                result = try allocator.dupe(u8, entry.name);
+            }
         }
-        last = entry.name;
+
+        return if (result) |first| first else error.NoBacklightDirsFound;
     }
-    return last;
 }
 
-fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) !void {
+fn performAction(args: Args, class: []const u8, name: []const u8) !void {
     const exe = args.exe;
     const action = args.action.?;
+
+    const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
+    const max_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "max_brightness" });
+
     if (mem.eql(u8, action, "get")) {
         try printFile(brightness_path);
     } else if (mem.eql(u8, action, "debug")) {
@@ -132,15 +156,15 @@ fn performAction(args: Args, brightness_path: []const u8, max_path: []const u8) 
             usage(exe);
             return ArgError.InvalidSetOption;
         } else if (mem.eql(u8, option.?, "min")) {
-            try writeFile(brightness_path, "0");
+            try setBrightness(class, name, 0);
         } else if (mem.eql(u8, option.?, "max")) {
             const max = try readFile(max_path);
-            try writeFile(brightness_path, max);
+            try setBrightness(class, name, max);
         } else if (mem.eql(u8, option.?, "inc") or mem.eql(u8, option.?, "dec")) {
             const max = try readFile(max_path);
             const curr = try readFile(brightness_path);
             const new_brightness = try calcPercent(curr, max, percent.?, option.?);
-            try writeFile(brightness_path, new_brightness);
+            try setBrightness(class, name, new_brightness);
         } else {
             usage(exe);
             return ArgError.InvalidSetOption;
@@ -182,56 +206,83 @@ fn printString(msg: []const u8) !void {
     };
 }
 
-fn calcPercent(curr: []const u8, max: []const u8, percent: []const u8, action: []const u8) ![]const u8 {
-    // Strip trailing newline if it exists
-    const value = if (curr[curr.len - 1] == '\n')
-        try fmt.parseInt(u32, curr[0 .. curr.len - 1], 10)
-    else
-        try fmt.parseInt(u32, curr, 10);
-    const max_value = if (max[max.len - 1] == '\n')
-        try fmt.parseInt(u32, max[0 .. max.len - 1], 10)
-    else
-        try fmt.parseInt(u32, max, 10);
-
+fn calcPercent(curr: u32, max: u32, percent: []const u8, action: []const u8) !u32 {
     if (percent[0] == '-') {
         return ArgError.InvalidSetActionValue;
     }
     const percent_value = try fmt.parseInt(u32, percent, 10);
-    const delta = max_value * percent_value / 100;
+    const delta = max * percent_value / 100;
     const new_value = if (mem.eql(u8, action, "inc"))
-        value + delta
+        curr + delta
     else if (mem.eql(u8, action, "dec"))
-        value - delta
+        curr - delta
     else
         return ArgError.InvalidSetActionValue;
-    const safe_value = if (new_value > max_value)
-        max_value
+    const safe_value = if (new_value > max)
+        max
     else if (new_value < 0)
         0
     else
         new_value;
-    return fmt.allocPrint(allocator, "{}", .{safe_value});
+
+    return safe_value;
 }
 
-fn writeFile(path: []const u8, value: []const u8) !void {
+fn writeFile(path: []const u8, value: u32) !void {
     var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
         warn("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
     defer file.close();
-    file.writer().writeAll(value) catch |err| {
+
+    file.writer().print("{}", .{value}) catch |err| {
         warn("Cannot write to {s}.\n", .{path});
         return err;
     };
 }
 
-fn readFile(path: []const u8) ![]const u8 {
+fn readFile(path: []const u8) !u32 {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
         warn("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
-    var buf = try allocator.alloc(u8, 4096);
-    const bytes_read = try file.read(buf[0..]);
-    return buf[0..bytes_read];
+
+    var buf: [128]u8 = undefined;
+    const bytes_read = try file.read(&buf);
+    const trimmed = std.mem.trimRight(u8, buf[0..bytes_read], "\n");
+
+    return std.fmt.parseInt(u32, trimmed, 10);
+}
+
+const setBrightness = if (build_options.logind) setBrightnessWithLogind else setBrightnessWithSysfs;
+
+fn setBrightnessWithSysfs(class: []const u8, name: []const u8, value: u32) !void {
+    const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
+
+    try writeFile(brightness_path, value);
+}
+
+fn setBrightnessWithLogind(class: []const u8, name: []const u8, value: u32) !void {
+    var bus: ?*c.sd_bus = null;
+    if (c.sd_bus_default_system(&bus) < 0) {
+        return error.DBusConnectError;
+    }
+    defer _ = c.sd_bus_unref(bus);
+
+    if (c.sd_bus_call_method(
+        bus,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1/session/auto",
+        "org.freedesktop.login1.Session",
+        "SetBrightness",
+        null,
+        null,
+        "ssu",
+        (try allocator.dupeZ(u8, class)).ptr,
+        (try allocator.dupeZ(u8, name)).ptr,
+        value,
+    ) < 0) {
+        return error.DBusMethodCallError;
+    }
 }
