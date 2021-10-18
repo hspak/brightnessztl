@@ -3,7 +3,7 @@ A CLI to control device backlight. It defaults to the `intel_backlight` class.
 
 ## Setup
 ```sh
-# requires at least zig 0.5.0+29d7b5a80
+# development roughly tracks zig master
 zig build
 ```
 
@@ -23,7 +23,15 @@ brightnessztl <action> [action-options]
     max:     Set brightness to maximum
     min:     Set brightness to minimum
 ```
-To run this as a non-root user, the following udev rules worked for me, but YMMV
+
+By default, `brightnessztl` now links in `libsystemd` to leverage the D-Bus C
+API to allow setting backlight values without root permissions or udev rules.
+(h/t https://github.com/joachimschmidt557)
+
+To disable this behavior, you can build via `zig build -Dlogind=false`.
+`brightnessztl` will require either root access or the following udev rules to
+run:
+
 ```
 ACTION=="add", SUBSYSTEM=="backlight", KERNEL=="intel_backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness"
 ACTION=="add", SUBSYSTEM=="backlight", KERNEL=="intel_backlight", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
