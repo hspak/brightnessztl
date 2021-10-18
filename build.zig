@@ -16,7 +16,7 @@ pub fn build(b: *Builder) void {
 
     if (logind) {
         exe.linkLibC();
-        exe.linkSystemLibrary("systemd");
+        exe.linkSystemLibrary("libsystemd");
     }
 
     exe.setBuildMode(mode);
