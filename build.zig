@@ -1,7 +1,12 @@
 const Builder = @import("std").build.Builder;
 
 pub fn build(b: *Builder) void {
+    const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
+
+    if (!target.isLinux()) {
+        @panic("Currently, only Linux is supported as the target OS");
+    }
 
     const logind = b.option(
         bool,
@@ -19,6 +24,7 @@ pub fn build(b: *Builder) void {
         exe.linkSystemLibrary("libsystemd");
     }
 
+    exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
 
