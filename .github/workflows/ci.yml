@@ -1,0 +1,9 @@
+name: Zig CI
+on: [push]
+jobs:
+  Explore-GitHub-Actions:
+    runs-on: ghcr.io/hspak/alpine-zig:latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v2
+      - run: zig build
