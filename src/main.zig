@@ -6,7 +6,6 @@ const fmt = std.fmt;
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
-const warn = std.debug.warn;
 const process = std.process;
 
 const c = @cImport({
@@ -37,13 +36,13 @@ const Args = struct {
     option_option: ?[]const u8,
 };
 
-var allocator: *Allocator = undefined;
+var allocator: Allocator = undefined;
 
 pub fn main() !void {
     // Using arena allocator, no need to dealloc anything
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    allocator = &arena.allocator;
     defer arena.deinit();
+    allocator = arena.allocator();
 
     const class = default_class;
     const path = try std.fs.path.join(allocator, &.{ sys_class_path, class });
@@ -103,7 +102,7 @@ fn usage(exe: []const u8) void {
         \\    min:     Set brightness to minimum
         \\
     ;
-    warn(str, .{exe});
+    std.debug.print(str, .{exe});
 }
 
 /// Checks if name is present in path, if not, returns the first entry
@@ -177,7 +176,7 @@ fn performAction(args: Args, class: []const u8, name: []const u8) !void {
 
 fn printFile(path: []const u8) !void {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
-        warn("Cannot open {s} with read permissions.\n", .{path});
+        std.debug.print("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
@@ -185,14 +184,14 @@ fn printFile(path: []const u8) !void {
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
-            warn("Unable to read file {s}\n", .{path});
+            std.debug.print("Unable to read file {s}\n", .{path});
             return err;
         };
         if (bytes_read == 0) {
             break;
         }
         stdout.writeAll(buf[0..bytes_read]) catch |err| {
-            warn("Unable to write to stdout\n", .{});
+            std.debug.print("Unable to write to stdout\n", .{});
             return err;
         };
     }
@@ -201,7 +200,7 @@ fn printFile(path: []const u8) !void {
 fn printString(msg: []const u8) !void {
     const stdout = io.getStdOut().writer();
     stdout.writeAll(msg) catch |err| {
-        warn("Unable to write to stdout\n", .{});
+        std.debug.print("Unable to write to stdout\n", .{});
         return err;
     };
 }
@@ -230,20 +229,20 @@ fn calcPercent(curr: u32, max: u32, percent: []const u8, action: []const u8) !u3
 
 fn writeFile(path: []const u8, value: u32) !void {
     var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
-        warn("Cannot open {s} with write permissions.\n", .{path});
+        std.debug.print("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
     defer file.close();
 
     file.writer().print("{}", .{value}) catch |err| {
-        warn("Cannot write to {s}.\n", .{path});
+        std.debug.print("Cannot write to {s}.\n", .{path});
         return err;
     };
 }
 
 fn readFile(path: []const u8) !u32 {
     var file = fs.cwd().openFile(path, .{}) catch |err| {
-        warn("Cannot open {s} with read permissions.\n", .{path});
+        std.debug.print("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
     defer file.close();
