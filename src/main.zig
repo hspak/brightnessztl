@@ -54,7 +54,7 @@ pub fn main() !void {
 
 fn parseArgs() !Args {
     var args_iter = process.args();
-    var exe = try args_iter.next(allocator).?;
+    var exe = (try args_iter.next(allocator)).?;
     var parsed_args = Args{
         .exe = exe,
         .action = null,
@@ -62,8 +62,7 @@ fn parseArgs() !Args {
         .option_option = null,
     };
     var level: u23 = 1;
-    while (args_iter.next(allocator)) |arg_or_err| {
-        var arg = arg_or_err catch unreachable;
+    while (try args_iter.next(allocator)) |arg| {
         if (level == 1) {
             parsed_args.action = arg;
             level += 1;
