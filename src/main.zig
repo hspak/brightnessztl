@@ -54,7 +54,7 @@ pub fn main() !void {
 
 fn parseArgs() !Args {
     var args_iter = process.args();
-    var exe = (try args_iter.next(allocator)).?;
+    var exe = args_iter.next().?;
     var parsed_args = Args{
         .exe = exe,
         .action = null,
@@ -62,7 +62,7 @@ fn parseArgs() !Args {
         .option_option = null,
     };
     var level: u23 = 1;
-    while (try args_iter.next(allocator)) |arg| {
+    while (args_iter.next()) |arg| {
         if (level == 1) {
             parsed_args.action = arg;
             level += 1;
@@ -227,7 +227,7 @@ fn calcPercent(curr: u32, max: u32, percent: []const u8, action: []const u8) !u3
 }
 
 fn writeFile(path: []const u8, value: u32) !void {
-    var file = fs.cwd().openFile(path, .{ .write = true }) catch |err| {
+    var file = fs.cwd().openFile(path, .{ .mode = .write_only }) catch |err| {
         std.debug.print("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
