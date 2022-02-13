@@ -36,20 +36,18 @@ const Args = struct {
     option_option: ?[]const u8,
 };
 
-var allocator: Allocator = undefined;
-
 pub fn main() !void {
     // Using arena allocator, no need to dealloc anything
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    allocator = arena.allocator();
+    const allocator = arena.allocator();
 
     const class = default_class;
     const path = try std.fs.path.join(allocator, &.{ sys_class_path, class });
-    const name = try findBrightnessPath(path, default_name);
+    const name = try findBrightnessPath(allocator, path, default_name);
 
     var args = try parseArgs();
-    return performAction(args, class, name);
+    return performAction(allocator, args, class, name);
 }
 
 fn parseArgs() !Args {
@@ -106,7 +104,7 @@ fn usage(exe: []const u8) void {
 
 /// Checks if name is present in path, if not, returns the first entry
 /// (lexicographically sorted)
-fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
+fn findBrightnessPath(allocator: Allocator, path: []const u8, name: []const u8) ![]const u8 {
     var dir = try fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
 
@@ -130,7 +128,7 @@ fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
     }
 }
 
-fn performAction(args: Args, class: []const u8, name: []const u8) !void {
+fn performAction(allocator: Allocator, args: Args, class: []const u8, name: []const u8) !void {
     const exe = args.exe;
     const action = args.action.?;
 
@@ -154,15 +152,15 @@ fn performAction(args: Args, class: []const u8, name: []const u8) !void {
             usage(exe);
             return ArgError.InvalidSetOption;
         } else if (mem.eql(u8, option.?, "min")) {
-            try setBrightness(class, name, 0);
+            try setBrightness(allocator, class, name, 0);
         } else if (mem.eql(u8, option.?, "max")) {
             const max = try readFile(max_path);
-            try setBrightness(class, name, max);
+            try setBrightness(allocator, class, name, max);
         } else if (mem.eql(u8, option.?, "inc") or mem.eql(u8, option.?, "dec")) {
             const max = try readFile(max_path);
             const curr = try readFile(brightness_path);
             const new_brightness = try calcPercent(curr, max, percent.?, option.?);
-            try setBrightness(class, name, new_brightness);
+            try setBrightness(allocator, class, name, new_brightness);
         } else {
             usage(exe);
             return ArgError.InvalidSetOption;
@@ -255,13 +253,13 @@ fn readFile(path: []const u8) !u32 {
 
 const setBrightness = if (build_options.logind) setBrightnessWithLogind else setBrightnessWithSysfs;
 
-fn setBrightnessWithSysfs(class: []const u8, name: []const u8, value: u32) !void {
+fn setBrightnessWithSysfs(allocator: Allocator, class: []const u8, name: []const u8, value: u32) !void {
     const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
 
     try writeFile(brightness_path, value);
 }
 
-fn setBrightnessWithLogind(class: []const u8, name: []const u8, value: u32) !void {
+fn setBrightnessWithLogind(allocator: Allocator, class: []const u8, name: []const u8, value: u32) !void {
     var bus: ?*c.sd_bus = null;
     if (c.sd_bus_default_system(&bus) < 0) {
         return error.DBusConnectError;
