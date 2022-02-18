@@ -18,8 +18,9 @@ brightnessztl <action> [action-options]
     help:   Display this
 
   Set options:
-    inc X:   Increase brightness by X%
-    dec X:   Decrease brightness by X%
+    X:       Increase brightness to X%
+    +X:      Increase brightness by X%
+    -X:      Decrease brightness by X%
     max:     Set brightness to maximum
     min:     Set brightness to minimum
 ```
