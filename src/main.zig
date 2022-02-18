@@ -29,58 +29,95 @@ const ArgError = error{
     InvalidSetActionValue,
 };
 
-const Args = struct {
-    exe: []const u8,
-    action: ?[]const u8,
-    action_option: ?[]const u8,
-    option_option: ?[]const u8,
+const Action = union(enum) {
+    get,
+    debug,
+    set: union(enum) {
+        min,
+        max,
+        inc: u8,
+        dec: u8,
+        set: u8,
+    },
 };
-
-var allocator: Allocator = undefined;
 
 pub fn main() !void {
     // Using arena allocator, no need to dealloc anything
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    allocator = arena.allocator();
+    const allocator = arena.allocator();
 
     const class = default_class;
     const path = try std.fs.path.join(allocator, &.{ sys_class_path, class });
-    const name = try findBrightnessPath(path, default_name);
+    const name = try findBrightnessPath(allocator, path, default_name);
 
-    var args = try parseArgs();
-    return performAction(args, class, name);
+    const action = try parseAction(allocator);
+    return performAction(allocator, action, class, name);
 }
 
-fn parseArgs() !Args {
-    var args_iter = process.args();
-    var exe = args_iter.next().?;
-    var parsed_args = Args{
-        .exe = exe,
-        .action = null,
-        .action_option = null,
-        .option_option = null,
-    };
-    var level: u23 = 1;
-    while (args_iter.next()) |arg| {
-        if (level == 1) {
-            parsed_args.action = arg;
-            level += 1;
-        } else if (level == 2) {
-            parsed_args.action_option = arg;
-            level += 1;
-        } else if (level == 3) {
-            parsed_args.option_option = arg;
-            level += 1;
-        } else if (level > 3) {
-            break;
-        }
-    }
-    if (level == 1) {
+fn fatal(comptime format: []const u8, args: anytype) noreturn {
+    std.log.err(format, args);
+    std.process.exit(1);
+}
+
+fn parseAction(allocator: Allocator) !Action {
+    const args = try process.argsAlloc(allocator);
+    const exe = args[0];
+
+    if (args.len <= 1) {
         usage(exe);
-        return ArgError.MissingAction;
+        fatal("expected a command (set/get/debug/help)", .{});
     }
-    return parsed_args;
+
+    const command = args[1];
+    if (std.mem.eql(u8, "help", command)) {
+        if (args.len > 2) fatal("unexpected arguments after '{s}'", .{command});
+        usage(exe);
+        std.process.exit(1);
+    } else if (std.mem.eql(u8, "debug", command)) {
+        if (args.len > 2) fatal("unexpected arguments after '{s}'", .{command});
+        return Action{ .debug = {} };
+    } else if (std.mem.eql(u8, "get", command)) {
+        if (args.len > 2) fatal("unexpected arguments after '{s}'", .{command});
+        return Action{ .get = {} };
+    } else if (std.mem.eql(u8, "set", command)) {
+        if (args.len <= 2) fatal("expected parameter after '{s}'", .{command});
+
+        const set_parameter = args[2];
+        if (std.mem.eql(u8, "min", set_parameter)) {
+            return Action{ .set = .min };
+        } else if (std.mem.eql(u8, "max", set_parameter)) {
+            return Action{ .set = .max };
+        } else {
+            const SetKind = enum { inc, dec, set };
+            const kind: SetKind = if (std.mem.startsWith(u8, set_parameter, "+"))
+                SetKind.inc
+            else if (std.mem.startsWith(u8, set_parameter, "-"))
+                SetKind.dec
+            else
+                SetKind.set;
+
+            const value = std.fmt.parseUnsigned(
+                u8,
+                switch (kind) {
+                    .inc, .dec => set_parameter[1..],
+                    .set => set_parameter,
+                },
+                10,
+            ) catch {
+                fatal("invalid value: '{s}'", .{set_parameter});
+            };
+            if (value > 100) fatal("value must not be larger than 100", .{});
+
+            return switch (kind) {
+                .inc => Action{ .set = .{ .inc = value } },
+                .dec => Action{ .set = .{ .dec = value } },
+                .set => Action{ .set = .{ .set = value } },
+            };
+        }
+    } else {
+        fatal("unrecognized command: '{s}'", .{command});
+    }
 }
 
 fn usage(exe: []const u8) void {
@@ -95,8 +132,9 @@ fn usage(exe: []const u8) void {
         \\    help:   Display this
         \\
         \\  Set options:
-        \\    inc X:   Increase brightness by X%
-        \\    dec X:   Decrease brightness by X%
+        \\    X:       Increase brightness to X%
+        \\    +X:      Increase brightness by X%
+        \\    -X:      Decrease brightness by X%
         \\    max:     Set brightness to maximum
         \\    min:     Set brightness to minimum
         \\
@@ -106,7 +144,7 @@ fn usage(exe: []const u8) void {
 
 /// Checks if name is present in path, if not, returns the first entry
 /// (lexicographically sorted)
-fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
+fn findBrightnessPath(allocator: Allocator, path: []const u8, name: []const u8) ![]const u8 {
     var dir = try fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
 
@@ -130,46 +168,49 @@ fn findBrightnessPath(path: []const u8, name: []const u8) ![]const u8 {
     }
 }
 
-fn performAction(args: Args, class: []const u8, name: []const u8) !void {
-    const exe = args.exe;
-    const action = args.action.?;
-
+fn performAction(allocator: Allocator, action: Action, class: []const u8, name: []const u8) !void {
     const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
     const max_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "max_brightness" });
 
-    if (mem.eql(u8, action, "get")) {
-        try printFile(brightness_path);
-    } else if (mem.eql(u8, action, "debug")) {
-        // TODO: find a more ergonomic print setup
-        try printString("Backlight path: ");
-        try printString(brightness_path);
-        try printString("\nBrightness: ");
-        try printFile(brightness_path);
-        try printString("Max Brightness: ");
-        try printFile(max_path);
-    } else if (mem.eql(u8, action, "set")) {
-        const option = args.action_option;
-        const percent = args.option_option;
-        if (option == null and percent == null) {
-            usage(exe);
-            return ArgError.InvalidSetOption;
-        } else if (mem.eql(u8, option.?, "min")) {
-            try setBrightness(class, name, 0);
-        } else if (mem.eql(u8, option.?, "max")) {
-            const max = try readFile(max_path);
-            try setBrightness(class, name, max);
-        } else if (mem.eql(u8, option.?, "inc") or mem.eql(u8, option.?, "dec")) {
+    switch (action) {
+        .get => {
             const max = try readFile(max_path);
             const curr = try readFile(brightness_path);
-            const new_brightness = try calcPercent(curr, max, percent.?, option.?);
-            try setBrightness(class, name, new_brightness);
-        } else {
-            usage(exe);
-            return ArgError.InvalidSetOption;
-        }
-    } else {
-        usage(exe);
-        return ArgError.InvalidAction;
+            const curr_percent = curr * 100 / max;
+            const stdout = io.getStdOut().writer();
+            try stdout.print("{}\n", .{curr_percent});
+        },
+        .debug => {
+            // TODO: find a more ergonomic print setup
+            try printString("Backlight path: ");
+            try printString(brightness_path);
+            try printString("\nBrightness: ");
+            try printFile(brightness_path);
+            try printString("Max Brightness: ");
+            try printFile(max_path);
+        },
+        .set => |set_action| {
+            switch (set_action) {
+                .min => try setBrightness(allocator, class, name, 0),
+                .max => {
+                    const max = try readFile(max_path);
+                    try setBrightness(allocator, class, name, max);
+                },
+                .inc, .dec, .set => {
+                    const max = try readFile(max_path);
+                    const curr = try readFile(brightness_path);
+                    const curr_percent = curr * 100 / max;
+                    const new_percent = switch (set_action) {
+                        .set => |value| value,
+                        .inc => |value| std.math.min(curr_percent + value, 100),
+                        .dec => |value| if (value > curr_percent) 0 else curr_percent - value,
+                        else => unreachable,
+                    };
+                    const new_brightness = max * new_percent / 100;
+                    try setBrightness(allocator, class, name, new_brightness);
+                },
+            }
+        },
     }
 }
 
@@ -204,28 +245,6 @@ fn printString(msg: []const u8) !void {
     };
 }
 
-fn calcPercent(curr: u32, max: u32, percent: []const u8, action: []const u8) !u32 {
-    if (percent[0] == '-') {
-        return ArgError.InvalidSetActionValue;
-    }
-    const percent_value = try fmt.parseInt(u32, percent, 10);
-    const delta = max * percent_value / 100;
-    const new_value = if (mem.eql(u8, action, "inc"))
-        curr + delta
-    else if (mem.eql(u8, action, "dec"))
-        curr - delta
-    else
-        return ArgError.InvalidSetActionValue;
-    const safe_value = if (new_value > max)
-        max
-    else if (new_value < 0)
-        0
-    else
-        new_value;
-
-    return safe_value;
-}
-
 fn writeFile(path: []const u8, value: u32) !void {
     var file = fs.cwd().openFile(path, .{ .mode = .write_only }) catch |err| {
         std.debug.print("Cannot open {s} with write permissions.\n", .{path});
@@ -255,13 +274,13 @@ fn readFile(path: []const u8) !u32 {
 
 const setBrightness = if (build_options.logind) setBrightnessWithLogind else setBrightnessWithSysfs;
 
-fn setBrightnessWithSysfs(class: []const u8, name: []const u8, value: u32) !void {
+fn setBrightnessWithSysfs(allocator: Allocator, class: []const u8, name: []const u8, value: u32) !void {
     const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
 
     try writeFile(brightness_path, value);
 }
 
-fn setBrightnessWithLogind(class: []const u8, name: []const u8, value: u32) !void {
+fn setBrightnessWithLogind(allocator: Allocator, class: []const u8, name: []const u8, value: u32) !void {
     var bus: ?*c.sd_bus = null;
     if (c.sd_bus_default_system(&bus) < 0) {
         return error.DBusConnectError;
