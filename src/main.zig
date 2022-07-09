@@ -246,7 +246,7 @@ fn printString(msg: []const u8) !void {
 }
 
 fn writeFile(path: []const u8, value: u32) !void {
-    var file = fs.cwd().openFile(path, .{ .mode = .write_only }) catch |err| {
+    var file = fs.cwd().openFile(path, .{ .read = false, .write = true } ) catch |err| {
         std.debug.print("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
