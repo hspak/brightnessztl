@@ -10,3 +10,4 @@ jobs:
       - name: Check out repository code
         uses: actions/checkout@v2
       - run: /tmp/zig build
+      - run: /tmp/zig build -Dlogind=false
