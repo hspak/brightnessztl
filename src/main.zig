@@ -148,10 +148,7 @@ fn findBrightnessPath(allocator: Allocator, path: []const u8, name: []const u8) 
     var iterable_dir = try fs.cwd().openIterableDir(path, .{});
     defer iterable_dir.close();
 
-    if (iterable_dir.dir.openDir(name, .{})) |*default_dir| {
-        default_dir.close();
-        return name;
-    } else |_| {
+    var default_dir = iterable_dir.dir.openDir(name, .{}) catch {
         var result: ?[]const u8 = null;
         var iterator = iterable_dir.iterate();
         while (try iterator.next()) |entry| {
@@ -165,7 +162,10 @@ fn findBrightnessPath(allocator: Allocator, path: []const u8, name: []const u8) 
         }
 
         return if (result) |first| first else error.NoBacklightDirsFound;
-    }
+    };
+    default_dir.close();
+
+    return name;
 }
 
 fn performAction(allocator: Allocator, action: Action, class: []const u8, name: []const u8) !void {
