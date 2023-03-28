@@ -2,7 +2,7 @@ const Builder = @import("std").build.Builder;
 
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
-    const mode = b.standardReleaseOptions();
+    const optimize = b.standardOptimizeOption(.{});
 
     if (!target.isLinux()) {
         @panic("Currently, only Linux is supported as the target OS");
@@ -14,7 +14,12 @@ pub fn build(b: *Builder) void {
         "Set to true to to enable logind D-Bus support. Defaults to true.",
     ) orelse true;
 
-    const exe = b.addExecutable("brightnessztl", "src/main.zig");
+    const exe = b.addExecutable(.{
+        .name = "brightnessztl",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
     const exe_options = b.addOptions();
     exe.addOptions("build_options", exe_options);
     exe_options.addOption(bool, "logind", logind);
@@ -24,8 +29,6 @@ pub fn build(b: *Builder) void {
         exe.linkSystemLibrary("libsystemd");
     }
 
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
     exe.install();
 
     const run_cmd = exe.run();
