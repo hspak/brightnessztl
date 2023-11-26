@@ -5,9 +5,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: sudo apt-get update && sudo apt-get install -y libsystemd-dev
-      - run: curl -o /tmp/zig.tar.xz $(curl https://ziglang.org/download/index.json 2>/dev/null | jq -r '.master | .["x86_64-linux"] | .tarball') 
-      - run: tar xf /tmp/zig.tar.xz -C /tmp --strip-components=1
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.11.0
       - name: Check out repository code
         uses: actions/checkout@v2
-      - run: /tmp/zig build
-      - run: /tmp/zig build -Dlogind=false
+      - run: zig build
+      - run: zig build -Dlogind=false

@@ -202,7 +202,7 @@ fn performAction(allocator: Allocator, action: Action, class: []const u8, name: 
                     const curr_percent = curr * 100 / max;
                     const new_percent = switch (set_action) {
                         .set => |value| value,
-                        .inc => |value| std.math.min(curr_percent + value, 100),
+                        .inc => |value| @min(curr_percent + value, 100),
                         .dec => |value| if (value > curr_percent) 0 else curr_percent - value,
                         else => unreachable,
                     };
