@@ -145,12 +145,12 @@ fn usage(exe: []const u8) void {
 /// Checks if name is present in path, if not, returns the first entry
 /// (lexicographically sorted)
 fn findBrightnessPath(allocator: Allocator, path: []const u8, name: []const u8) ![]const u8 {
-    var iterable_dir = try fs.cwd().openIterableDir(path, .{});
-    defer iterable_dir.close();
+    var dir = try fs.cwd().openDir(path, .{ .iterate = true });
+    defer dir.close();
 
-    var default_dir = iterable_dir.dir.openDir(name, .{}) catch {
+    var default_dir = dir.openDir(name, .{}) catch {
         var result: ?[]const u8 = null;
-        var iterator = iterable_dir.iterate();
+        var iterator = dir.iterate();
         while (try iterator.next()) |entry| {
             if (result) |candidate| {
                 if (std.mem.order(u8, candidate, entry.name) == .lt) {

@@ -1,10 +1,10 @@
-const Builder = @import("std").build.Builder;
+const Build = @import("std").Build;
 
-pub fn build(b: *Builder) void {
+pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    if (!target.isLinux()) {
+    if (target.result.os.tag != .linux) {
         @panic("Currently, only Linux is supported as the target OS");
     }
 
@@ -16,12 +16,12 @@ pub fn build(b: *Builder) void {
 
     const exe = b.addExecutable(.{
         .name = "brightnessztl",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
     const exe_options = b.addOptions();
-    exe.addOptions("build_options", exe_options);
+    exe.root_module.addOptions("build_options", exe_options);
     exe_options.addOption(bool, "logind", logind);
 
     if (logind) {
