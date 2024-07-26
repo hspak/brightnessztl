@@ -7,8 +7,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libsystemd-dev
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.11.0
+          version: 0.13.0
       - name: Check out repository code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - run: zig build
       - run: zig build -Dlogind=false
