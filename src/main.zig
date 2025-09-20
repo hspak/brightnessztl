@@ -181,6 +181,7 @@ fn performAction(allocator: Allocator, action: Action, class: []const u8, name: 
             var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
             const stdout = &stdout_writer.interface;
             try stdout.print("{}\n", .{curr_percent});
+            try stdout.flush();
         },
         .debug => {
             // TODO: find a more ergonomic print setup
@@ -239,6 +240,7 @@ fn printFile(path: []const u8) !void {
             return err;
         };
     }
+    try stdout.flush();
 }
 
 fn printString(msg: []const u8) !void {
@@ -249,6 +251,7 @@ fn printString(msg: []const u8) !void {
         std.debug.print("Unable to write to stdout\n", .{});
         return err;
     };
+    try stdout.flush();
 }
 
 fn writeFile(path: []const u8, value: u32) !void {
