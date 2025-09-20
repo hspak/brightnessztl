@@ -177,7 +177,9 @@ fn performAction(allocator: Allocator, action: Action, class: []const u8, name: 
             const max = try readFile(max_path);
             const curr = try readFile(brightness_path);
             const curr_percent = curr * 100 / max;
-            const stdout = io.getStdOut().writer();
+            var stdout_buffer: [1024]u8 = undefined;
+            var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+            const stdout = &stdout_writer.interface;
             try stdout.print("{}\n", .{curr_percent});
         },
         .debug => {
@@ -220,7 +222,9 @@ fn printFile(path: []const u8) !void {
         return err;
     };
     defer file.close();
-    const stdout = io.getStdOut().writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     var buf: [4096]u8 = undefined;
     while (true) {
         const bytes_read = file.read(buf[0..]) catch |err| {
@@ -238,7 +242,9 @@ fn printFile(path: []const u8) !void {
 }
 
 fn printString(msg: []const u8) !void {
-    const stdout = io.getStdOut().writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     stdout.writeAll(msg) catch |err| {
         std.debug.print("Unable to write to stdout\n", .{});
         return err;
