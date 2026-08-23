@@ -1,12 +1,17 @@
+//! brightnessztl reads and writes backlight brightness under /sys/class/backlight,
+//! optionally going through logind's D-Bus SetBrightness method so unprivileged
+//! users can change their session's brightness.
+
 const std = @import("std");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
 const fmt = std.fmt;
-const fs = std.fs;
-const io = std.io;
 const mem = std.mem;
-const process = std.process;
+const Io = std.Io;
+const Dir = Io.Dir;
+const File = Io.File;
+
+const log = std.log.scoped(.brightnessztl);
 
 const c = @cImport({
     @cInclude("systemd/sd-bus.h");
@@ -15,19 +20,6 @@ const c = @cImport({
 const sys_class_path = "/sys/class";
 const default_class = "backlight";
 const default_name = "intel_backlight";
-
-const PathError = error{
-    NoBacklightDirsFound,
-    NoBrightnessFileFound,
-    NoMaxBrightnessFileFound,
-};
-const ArgError = error{
-    MissingSetOption,
-    MissingAction,
-    InvalidAction,
-    InvalidSetOption,
-    InvalidSetActionValue,
-};
 
 const Action = union(enum) {
     get,
@@ -41,27 +33,26 @@ const Action = union(enum) {
     },
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     // Using arena allocator, no need to dealloc anything
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    const allocator = init.arena.allocator();
+    const io = init.io;
 
-    const class = default_class;
-    const path = try std.fs.path.join(allocator, &.{ sys_class_path, class });
-    const name = try findBrightnessPath(allocator, path, default_name);
+    const args = try init.minimal.args.toSlice(allocator);
+    const action = parseAction(args);
 
-    const action = try parseAction(allocator);
-    return performAction(allocator, action, class, name);
+    const path = try Dir.path.join(allocator, &.{ sys_class_path, default_class });
+    const name = try findBrightnessPath(allocator, io, path, default_name);
+    return performAction(allocator, io, action, default_class, name);
 }
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {
-    std.log.err(format, args);
+    @branchHint(.cold);
+    log.err(format, args);
     std.process.exit(1);
 }
 
-fn parseAction(allocator: Allocator) !Action {
-    const args = try process.argsAlloc(allocator);
+fn parseAction(args: []const []const u8) Action {
     const exe = args[0];
 
     if (args.len <= 1) {
@@ -70,34 +61,34 @@ fn parseAction(allocator: Allocator) !Action {
     }
 
     const command = args[1];
-    if (std.mem.eql(u8, "help", command)) {
+    if (mem.eql(u8, "help", command)) {
         if (args.len > 2) fatal("unexpected arguments after '{s}'", .{command});
         usage(exe);
         std.process.exit(1);
-    } else if (std.mem.eql(u8, "debug", command)) {
+    } else if (mem.eql(u8, "debug", command)) {
         if (args.len > 2) fatal("unexpected arguments after '{s}'", .{command});
-        return Action{ .debug = {} };
-    } else if (std.mem.eql(u8, "get", command)) {
+        return .debug;
+    } else if (mem.eql(u8, "get", command)) {
         if (args.len > 2) fatal("unexpected arguments after '{s}'", .{command});
-        return Action{ .get = {} };
-    } else if (std.mem.eql(u8, "set", command)) {
+        return .get;
+    } else if (mem.eql(u8, "set", command)) {
         if (args.len <= 2) fatal("expected parameter after '{s}'", .{command});
 
         const set_parameter = args[2];
-        if (std.mem.eql(u8, "min", set_parameter)) {
-            return Action{ .set = .min };
-        } else if (std.mem.eql(u8, "max", set_parameter)) {
-            return Action{ .set = .max };
+        if (mem.eql(u8, "min", set_parameter)) {
+            return .{ .set = .min };
+        } else if (mem.eql(u8, "max", set_parameter)) {
+            return .{ .set = .max };
         } else {
             const SetKind = enum { inc, dec, set };
-            const kind: SetKind = if (std.mem.startsWith(u8, set_parameter, "+"))
+            const kind: SetKind = if (mem.startsWith(u8, set_parameter, "+"))
                 SetKind.inc
-            else if (std.mem.startsWith(u8, set_parameter, "-"))
+            else if (mem.startsWith(u8, set_parameter, "-"))
                 SetKind.dec
             else
                 SetKind.set;
 
-            const value = std.fmt.parseUnsigned(
+            const value = fmt.parseUnsigned(
                 u8,
                 switch (kind) {
                     .inc, .dec => set_parameter[1..],
@@ -110,9 +101,9 @@ fn parseAction(allocator: Allocator) !Action {
             if (value > 100) fatal("value must not be larger than 100", .{});
 
             return switch (kind) {
-                .inc => Action{ .set = .{ .inc = value } },
-                .dec => Action{ .set = .{ .dec = value } },
-                .set => Action{ .set = .{ .set = value } },
+                .inc => .{ .set = .{ .inc = value } },
+                .dec => .{ .set = .{ .dec = value } },
+                .set => .{ .set = .{ .set = value } },
             };
         }
     } else {
@@ -132,7 +123,7 @@ fn usage(exe: []const u8) void {
         \\    help:   Display this
         \\
         \\  Set options:
-        \\    X:       Increase brightness to X%
+        \\    X:       Set brightness to X%
         \\    +X:      Increase brightness by X%
         \\    -X:      Decrease brightness by X%
         \\    max:     Set brightness to maximum
@@ -142,93 +133,115 @@ fn usage(exe: []const u8) void {
     std.debug.print(str, .{exe});
 }
 
-/// Checks if name is present in path, if not, returns the first entry
-/// (lexicographically sorted)
-fn findBrightnessPath(allocator: Allocator, path: []const u8, name: []const u8) ![]const u8 {
-    var dir = try fs.cwd().openDir(path, .{ .iterate = true });
-    defer dir.close();
+/// Returns `name` if it is an entry under `path`, otherwise the
+/// lexicographically first entry found there.
+/// The returned slice is owned by `allocator`.
+fn findBrightnessPath(
+    allocator: Allocator,
+    io: Io,
+    path: []const u8,
+    name: []const u8,
+) ![]const u8 {
+    var dir = try Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
 
-    var default_dir = dir.openDir(name, .{}) catch {
+    var default_dir = dir.openDir(io, name, .{}) catch {
         var result: ?[]const u8 = null;
         var iterator = dir.iterate();
-        while (try iterator.next()) |entry| {
+        while (try iterator.next(io)) |entry| {
             if (result) |candidate| {
-                if (std.mem.order(u8, candidate, entry.name) == .lt) {
-                    result = try allocator.dupe(u8, entry.name);
-                }
-            } else {
-                result = try allocator.dupe(u8, entry.name);
+                if (mem.order(u8, candidate, entry.name) != .gt) continue;
             }
+            result = try allocator.dupe(u8, entry.name);
         }
 
-        return if (result) |first| first else error.NoBacklightDirsFound;
+        return result orelse error.NoBacklightDirsFound;
     };
-    default_dir.close();
+    default_dir.close(io);
 
     return name;
 }
 
-fn performAction(allocator: Allocator, action: Action, class: []const u8, name: []const u8) !void {
-    const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
-    const max_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "max_brightness" });
+fn performAction(
+    allocator: Allocator,
+    io: Io,
+    action: Action,
+    class: []const u8,
+    name: []const u8,
+) !void {
+    const brightness_path = try Dir.path.join(allocator, &.{
+        sys_class_path,
+        class,
+        name,
+        "brightness",
+    });
+    const max_path = try Dir.path.join(allocator, &.{
+        sys_class_path,
+        class,
+        name,
+        "max_brightness",
+    });
 
     switch (action) {
         .get => {
-            const max = try readFile(max_path);
-            const curr = try readFile(brightness_path);
+            const max = try readFile(io, max_path);
+            const curr = try readFile(io, brightness_path);
             const curr_percent = curr * 100 / max;
             var stdout_buffer: [1024]u8 = undefined;
-            var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+            var stdout_writer = File.stdout().writer(io, &stdout_buffer);
             const stdout = &stdout_writer.interface;
             try stdout.print("{}\n", .{curr_percent});
             try stdout.flush();
         },
         .debug => {
-            // TODO: find a more ergonomic print setup
-            try printString("Backlight path: ");
-            try printString(brightness_path);
-            try printString("\nBrightness: ");
-            try printFile(brightness_path);
-            try printString("Max Brightness: ");
-            try printFile(max_path);
+            try printString(io, "Backlight path: ");
+            try printString(io, brightness_path);
+            try printString(io, "\nBrightness: ");
+            try printFile(io, brightness_path);
+            try printString(io, "Max Brightness: ");
+            try printFile(io, max_path);
         },
         .set => |set_action| {
             switch (set_action) {
-                .min => try setBrightness(allocator, class, name, 0),
+                .min => try setBrightness(allocator, io, class, name, 0),
                 .max => {
-                    const max = try readFile(max_path);
-                    try setBrightness(allocator, class, name, max);
+                    const max = try readFile(io, max_path);
+                    try setBrightness(allocator, io, class, name, max);
                 },
                 .inc, .dec, .set => {
-                    const max = try readFile(max_path);
-                    const curr = try readFile(brightness_path);
+                    const max = try readFile(io, max_path);
+                    const curr = try readFile(io, brightness_path);
                     const curr_percent = curr * 100 / max;
                     const new_percent = switch (set_action) {
                         .set => |value| value,
                         .inc => |value| @min(curr_percent + value, 100),
                         .dec => |value| if (value > curr_percent) 0 else curr_percent - value,
+                        // .min and .max are captured by the outer prongs.
                         else => unreachable,
                     };
                     const new_brightness = max * new_percent / 100;
-                    try setBrightness(allocator, class, name, new_brightness);
+                    try setBrightness(allocator, io, class, name, new_brightness);
                 },
             }
         },
     }
 }
 
-fn printFile(path: []const u8) !void {
-    var file = fs.cwd().openFile(path, .{}) catch |err| {
+fn printFile(io: Io, path: []const u8) !void {
+    var file = Dir.cwd().openFile(io, path, .{}) catch |err| {
         std.debug.print("Cannot open {s} with read permissions.\n", .{path});
         return err;
     };
-    defer file.close();
+    defer file.close(io);
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
+    var file_buffer: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &file_buffer);
+    const reader = &file_reader.interface;
     var buf: [4096]u8 = undefined;
     while (true) {
-        const bytes_read = file.read(buf[0..]) catch |err| {
+        const bytes_read = reader.readSliceShort(&buf) catch |err| {
             std.debug.print("Unable to read file {s}\n", .{path});
             return err;
         };
@@ -243,9 +256,9 @@ fn printFile(path: []const u8) !void {
     try stdout.flush();
 }
 
-fn printString(msg: []const u8) !void {
+fn printString(io: Io, msg: []const u8) !void {
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     stdout.writeAll(msg) catch |err| {
         std.debug.print("Unable to write to stdout\n", .{});
@@ -254,42 +267,56 @@ fn printString(msg: []const u8) !void {
     try stdout.flush();
 }
 
-fn writeFile(path: []const u8, value: u32) !void {
-    var file = fs.cwd().openFile(path, .{ .mode = .write_only }) catch |err| {
+fn writeFile(io: Io, path: []const u8, value: u32) !void {
+    var file = Dir.cwd().openFile(io, path, .{ .mode = .write_only }) catch |err| {
         std.debug.print("Cannot open {s} with write permissions.\n", .{path});
         return err;
     };
-    defer file.close();
+    defer file.close(io);
 
-    file.writer().print("{}", .{value}) catch |err| {
+    var buffer: [64]u8 = undefined;
+    const buf = try fmt.bufPrint(&buffer, "{}", .{value});
+    file.writeStreamingAll(io, buf) catch |err| {
         std.debug.print("Cannot write to {s}.\n", .{path});
         return err;
     };
 }
 
-fn readFile(path: []const u8) !u32 {
-    var file = fs.cwd().openFile(path, .{}) catch |err| {
-        std.debug.print("Cannot open {s} with read permissions.\n", .{path});
-        return err;
-    };
-    defer file.close();
-
+fn readFile(io: Io, path: []const u8) !u32 {
     var buf: [128]u8 = undefined;
-    const bytes_read = try file.read(&buf);
-    const trimmed = std.mem.trimRight(u8, buf[0..bytes_read], "\n");
+    const bytes = try Dir.cwd().readFile(io, path, &buf);
+    const trimmed = mem.trim(u8, bytes, "\n");
 
-    return std.fmt.parseInt(u32, trimmed, 10);
+    return fmt.parseInt(u32, trimmed, 10);
 }
 
 const setBrightness = if (build_options.logind) setBrightnessWithLogind else setBrightnessWithSysfs;
 
-fn setBrightnessWithSysfs(allocator: Allocator, class: []const u8, name: []const u8, value: u32) !void {
-    const brightness_path = try std.fs.path.join(allocator, &.{ sys_class_path, class, name, "brightness" });
+fn setBrightnessWithSysfs(
+    allocator: Allocator,
+    io: Io,
+    class: []const u8,
+    name: []const u8,
+    value: u32,
+) !void {
+    const brightness_path = try Dir.path.join(allocator, &.{
+        sys_class_path,
+        class,
+        name,
+        "brightness",
+    });
 
-    try writeFile(brightness_path, value);
+    try writeFile(io, brightness_path, value);
 }
 
-fn setBrightnessWithLogind(allocator: Allocator, class: []const u8, name: []const u8, value: u32) !void {
+fn setBrightnessWithLogind(
+    allocator: Allocator,
+    io: Io,
+    class: []const u8,
+    name: []const u8,
+    value: u32,
+) !void {
+    _ = io;
     var bus: ?*c.sd_bus = null;
     if (c.sd_bus_default_system(&bus) < 0) {
         return error.DBusConnectError;
@@ -311,4 +338,51 @@ fn setBrightnessWithLogind(allocator: Allocator, class: []const u8, name: []cons
     ) < 0) {
         return error.DBusMethodCallError;
     }
+}
+
+test "parseAction parses get and debug without options" {
+    const testing = std.testing;
+
+    try testing.expectEqual(Action{ .get = {} }, parseAction(&.{ "brightnessztl", "get" }));
+    try testing.expectEqual(Action{ .debug = {} }, parseAction(&.{ "brightnessztl", "debug" }));
+}
+
+test "parseAction parses set min and set max" {
+    const testing = std.testing;
+
+    try testing.expectEqual(Action{ .set = .min }, parseAction(&.{
+        "brightnessztl",
+        "set",
+        "min",
+    }));
+    try testing.expectEqual(Action{ .set = .max }, parseAction(&.{
+        "brightnessztl",
+        "set",
+        "max",
+    }));
+}
+
+test "parseAction parses absolute and relative percentages" {
+    const testing = std.testing;
+
+    try testing.expectEqual(Action{ .set = .{ .set = 42 } }, parseAction(&.{
+        "brightnessztl",
+        "set",
+        "42",
+    }));
+    try testing.expectEqual(Action{ .set = .{ .set = 100 } }, parseAction(&.{
+        "brightnessztl",
+        "set",
+        "100",
+    }));
+    try testing.expectEqual(Action{ .set = .{ .inc = 7 } }, parseAction(&.{
+        "brightnessztl",
+        "set",
+        "+7",
+    }));
+    try testing.expectEqual(Action{ .set = .{ .dec = 3 } }, parseAction(&.{
+        "brightnessztl",
+        "set",
+        "-3",
+    }));
 }
